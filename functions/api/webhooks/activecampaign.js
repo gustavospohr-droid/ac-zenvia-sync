@@ -1,9 +1,9 @@
 export async function onRequest(context) {
   const { request, env } = context;
 
-  // 1) Segurança simples por querystring (ActiveCampaign não assina webhook nativamente)
   const url = new URL(request.url);
   const sig = url.searchParams.get("sig");
+  const debug = url.searchParams.get("debug") === "1";
   const expected = env.WEBHOOK_SIG;
 
   if (!expected) {
@@ -20,7 +20,6 @@ export async function onRequest(context) {
     );
   }
 
-  // 2) Aceitar apenas POST (webhooks)
   if (request.method !== "POST") {
     return new Response(
       JSON.stringify({ error: "Method Not Allowed" }),
@@ -28,7 +27,6 @@ export async function onRequest(context) {
     );
   }
 
-  // 3) Ler payload (AC pode mandar x-www-form-urlencoded ou JSON)
   const contentType = request.headers.get("content-type") || "";
   let payload = {};
 
@@ -39,7 +37,6 @@ export async function onRequest(context) {
       const text = await request.text();
       payload = Object.fromEntries(new URLSearchParams(text));
     } else {
-      // fallback
       const text = await request.text();
       try {
         payload = JSON.parse(text);
@@ -54,21 +51,7 @@ export async function onRequest(context) {
     );
   }
 
-  // 4) Logar payload (sem retornar dados sensíveis no response)
-  const safeHeaders = {
-    "content-type": request.headers.get("content-type") || "",
-    "user-agent": request.headers.get("user-agent") || ""
-  };
-
-  const pick = (obj, keys) => {
-    const out = {};
-    for (const k of keys) {
-      if (obj && Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
-    }
-    return out;
-  };
-
-  // Alguns webhooks do AC chegam com chaves tipo "contact[id]" em form-urlencoded.
+  // Extrair campos comuns (AC costuma mandar form-urlencoded com chaves "contact[id]")
   const contactId =
     payload["contact[id]"] ||
     payload["contact_id"] ||
@@ -80,21 +63,30 @@ export async function onRequest(context) {
     payload["email"] ||
     null;
 
-  const highlights = {
-    topLevel: pick(payload, ["type", "event", "action", "date_time", "initiated_from"]),
-    contactId,
-    email
+  const pick = (obj, keys) => {
+    const out = {};
+    for (const k of keys) if (obj && k in obj) out[k] = obj[k];
+    return out;
   };
 
-  console.log("AC_WEBHOOK_RECEIVED", {
-    at: new Date().toISOString(),
-    url: request.url,
-    headers: safeHeaders,
-    highlights,
-    payload
-  });
+  if (debug) {
+    const keys = Object.keys(payload || {}).slice(0, 200); // limita para não explodir
+    return new Response(
+      JSON.stringify({
+        received: true,
+        debug: true,
+        contentType,
+        keys,
+        highlights: {
+          contactId,
+          email,
+          topLevel: pick(payload, ["type", "event", "action", "date_time", "initiated_from"])
+        }
+      }, null, 2),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
-  // 5) Responder rápido com "ok"
   return new Response(
     JSON.stringify({ received: true }),
     { status: 200, headers: { "Content-Type": "application/json" } }
