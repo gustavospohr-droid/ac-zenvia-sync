@@ -6,16 +6,20 @@ export async function onRequest(context) {
   const debug = url.searchParams.get("debug") === "1";
   const expected = env.WEBHOOK_SIG;
 
-  const json = (obj, status = 200, extraHeaders = {}) =>
+  const json = (obj, status = 200) =>
     new Response(JSON.stringify(obj), {
       status,
-      headers: { "Content-Type": "application/json", ...extraHeaders },
+      headers: { "Content-Type": "application/json" },
     });
 
+  // Segurança
   if (!expected) return json({ error: "Missing WEBHOOK_SIG in environment variables" }, 500);
   if (!sig || sig !== expected) return json({ error: "Unauthorized" }, 401);
+
+  // Webhook só aceita POST
   if (request.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
 
+  // Ler payload
   const contentType = request.headers.get("content-type") || "";
   let payload = {};
 
@@ -37,25 +41,36 @@ export async function onRequest(context) {
     return json({ error: "Invalid payload", detail: String(e) }, 400);
   }
 
-  const keysCount = Object.keys(payload || {}).length;
-
+  // Extrair identificadores comuns do AC
   const contactId =
     payload["contact[id]"] ||
     payload["contact_id"] ||
     payload["id"] ||
-    "";
+    null;
 
   const email =
     payload["contact[email]"] ||
     payload["email"] ||
-    "";
+    null;
 
-  // Header curto (limite prático: mantenha bem pequeno)
-  const debugHeader = debug
-    ? `contactId=${String(contactId).slice(0, 40)};email=${String(email).slice(0, 60)};keys=${keysCount}`
-    : "";
+  // Debug: devolve resumo + amostra de chaves
+  if (debug) {
+    const keys = Object.keys(payload || {});
+    return json({
+      received: true,
+      debug: true,
+      contentType,
+      contactId,
+      email,
+      keysCount: keys.length,
+      keysSample: keys.slice(0, 60),
+      // (Opcional) para depuração inicial; depois podemos remover:
+      payloadSample: Object.fromEntries(
+        keys.slice(0, 20).map((k) => [k, payload[k]])
+      ),
+    });
+  }
 
-  const extra = debug ? { "x-ac-debug": debugHeader } : {};
-
-  return json({ received: true }, 200, extra);
+  // Normal: resposta mínima
+  return json({ received: true });
 }
