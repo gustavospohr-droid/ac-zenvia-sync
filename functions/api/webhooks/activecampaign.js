@@ -49,54 +49,54 @@ export async function onRequest(context) {
     }
   } catch (e) {
     return new Response(
-    // 4) Logar payload (não retornar no response)
-const safeHeaders = {
-  "content-type": request.headers.get("content-type") || "",
-  "user-agent": request.headers.get("user-agent") || ""
-};
-
-// Se payload veio "achatado" (form-urlencoded), ele pode ficar enorme.
-// Vamos logar apenas campos-chave quando existirem.
-const pick = (obj, keys) => {
-  const out = {};
-  for (const k of keys) {
-    if (obj && Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
+      JSON.stringify({ error: "Invalid payload", detail: String(e) }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
   }
-  return out;
-};
 
-// Alguns webhooks do AC chegam como chaves tipo "contact[id]" em form-urlencoded.
-// Vamos capturar o que for mais comum.
-const highlights = {
-  topLevel: pick(payload, ["type", "event", "action", "date_time", "initiated_from"]),
-  contactId:
+  // 4) Logar payload (sem retornar dados sensíveis no response)
+  const safeHeaders = {
+    "content-type": request.headers.get("content-type") || "",
+    "user-agent": request.headers.get("user-agent") || ""
+  };
+
+  const pick = (obj, keys) => {
+    const out = {};
+    for (const k of keys) {
+      if (obj && Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
+    }
+    return out;
+  };
+
+  // Alguns webhooks do AC chegam com chaves tipo "contact[id]" em form-urlencoded.
+  const contactId =
     payload["contact[id]"] ||
-    payload["contact[id]".toString()] ||
     payload["contact_id"] ||
     payload["id"] ||
-    null,
-  email: payload["contact[email]"] || payload["email"] || null
-};
+    null;
 
-console.log("AC_WEBHOOK_RECEIVED", {
-  at: new Date().toISOString(),
-  url: request.url,
-  headers: safeHeaders,
-  highlights,
-  // ATENÇÃO: Para depuração inicial, vamos logar o payload completo.
-  // Se tiver dados sensíveis, depois reduzimos.
-  payload
-});
+  const email =
+    payload["contact[email]"] ||
+    payload["email"] ||
+    null;
 
-return new Response(
-  JSON.stringify({ received: true }),
-  { status: 200, headers: { "Content-Type": "application/json" } }
-);
+  const highlights = {
+    topLevel: pick(payload, ["type", "event", "action", "date_time", "initiated_from"]),
+    contactId,
+    email
+  };
 
-  // 4) Por enquanto, só confirma recebimento (não integra ainda)
-  // No próximo passo vamos chamar ActiveCampaign API e depois Zenvia.
+  console.log("AC_WEBHOOK_RECEIVED", {
+    at: new Date().toISOString(),
+    url: request.url,
+    headers: safeHeaders,
+    highlights,
+    payload
+  });
+
+  // 5) Responder rápido com "ok"
   return new Response(
-    JSON.stringify({ received: true, at: new Date().toISOString(), payload }),
+    JSON.stringify({ received: true }),
     { status: 200, headers: { "Content-Type": "application/json" } }
   );
 }
