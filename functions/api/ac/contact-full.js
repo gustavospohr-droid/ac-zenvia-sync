@@ -1,14 +1,10 @@
-async function acGet(env, path) {
+async function acGetText(env, path, timeoutMs) {
   const baseUrl = (env.AC_API_URL || "").replace(/\/$/, "");
   const token = env.AC_API_TOKEN;
-
-  if (!baseUrl || !token) {
-    throw new Error("Missing AC_API_URL or AC_API_TOKEN");
-  }
+  if (!baseUrl || !token) throw new Error("Missing AC_API_URL or AC_API_TOKEN");
 
   const url = `${baseUrl}${path}`;
   const controller = new AbortController();
-  const timeoutMs = 8000;
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -18,13 +14,9 @@ async function acGet(env, path) {
       signal: controller.signal,
     });
     const text = await res.text();
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = { raw: text };
-    }
-    return { ok: res.ok, status: res.status, url, body: json };
+    let body;
+    try { body = JSON.parse(text); } catch { body = { raw: text }; }
+    return { ok: res.ok, status: res.status, url, body };
   } finally {
     clearTimeout(t);
   }
@@ -32,44 +24,45 @@ async function acGet(env, path) {
 
 export async function onRequest(context) {
   const { request, env } = context;
-
   const u = new URL(request.url);
   const id = u.searchParams.get("id");
-  if (!id) {
-    return new Response(JSON.stringify({ error: "Missing id" }), {
-      status: 400,
+
+  const json = (obj, status = 200) =>
+    new Response(JSON.stringify(obj, null, 2), {
+      status,
       headers: { "Content-Type": "application/json" },
     });
-  }
+
+  if (!id) return json({ error: "Missing id" }, 400);
 
   try {
-    const [contact, fieldValues, contactLists] = await Promise.all([
-      acGet(env, `/api/3/contacts/${encodeURIComponent(id)}`),
-      acGet(env, `/api/3/contacts/${encodeURIComponent(id)}/fieldValues`),
-      acGet(env, `/api/3/contacts/${encodeURIComponent(id)}/contactLists`),
-    ]);
+    // 1) Rápidos e essenciais
+    const fieldValues = await acGetText(env, `/api/3/contacts/${encodeURIComponent(id)}/fieldValues`, 15000);
+    const contactLists = await acGetText(env, `/api/3/contacts/${encodeURIComponent(id)}/contactLists`, 15000);
 
-    return new Response(
-      JSON.stringify(
-        {
-          contact: contact.body,
-          fieldValues: fieldValues.body,
-          contactLists: contactLists.body,
-          meta: {
-            contactStatus: contact.status,
-            fieldValuesStatus: fieldValues.status,
-            contactListsStatus: contactLists.status,
-          },
-        },
-        null,
-        2
-      ),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+    // 2) Tentar pegar "contact base", mas sem travar o fluxo (pode ser pesado na sua conta)
+    let contactBase = { ok: false, status: 0, url: null, body: null, skipped: true };
+    try {
+      contactBase = await acGetText(env, `/api/3/contacts/${encodeURIComponent(id)}`, 60000);
+      contactBase.skipped = false;
+    } catch (e) {
+      contactBase = { ok: false, status: 0, url: `/api/3/contacts/${id}`, error: String(e), skipped: false };
+    }
+
+    return json({
+      meta: {
+        fieldValuesStatus: fieldValues.status,
+        contactListsStatus: contactLists.status,
+        contactBaseStatus: contactBase.status || null,
+        contactBaseSkipped: contactBase.skipped === true,
+      },
+      // O que você de fato precisa para sincronizar:
+      fieldValues: fieldValues.body,
+      contactLists: contactLists.body,
+      // Opcional (pode ser grande/lento):
+      contactBase: contactBase.body,
+    });
   } catch (e) {
-    return new Response(
-      JSON.stringify({ error: "Failed to load contact-full", detail: String(e) }, null, 2),
-      { status: 502, headers: { "Content-Type": "application/json" } }
-    );
+    return json({ error: "Failed to load contact-full", detail: String(e) }, 502);
   }
 }
