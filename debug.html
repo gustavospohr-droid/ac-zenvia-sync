@@ -1,6 +1,58 @@
 <!doctype html>
 <html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Debug AC Webhook</title>
+  </head>
   <body>
-    <h1>DEBUG OK</h1>
+    <h1>Debug AC Webhook</h1>
+
+    <p>Este formulário envia um POST (application/x-www-form-urlencoded) para o endpoint do webhook e mostra a resposta.</p>
+
+    <div>
+      <label><strong>Sig</strong></label><br />
+      <input id="sig" style="width: 520px" placeholder="Cole sua sig (WEBHOOK_SIG) aqui" />
+    </div>
+
+    <div style="margin-top:12px;">
+      <label><strong>contact[id]</strong></label><br />
+      <input id="cid" value="123" />
+    </div>
+
+    <div style="margin-top:12px;">
+      <label><strong>contact[email]</strong></label><br />
+      <input id="email" style="width: 520px" value="teste@example.com" />
+    </div>
+
+    <div style="margin-top:12px;">
+      <button id="send">Enviar POST</button>
+    </div>
+
+    <pre id="out" style="margin-top:16px; background:#f5f5f5; padding:12px; white-space:pre-wrap;"></pre>
+
+    <script>
+      document.getElementById("send").addEventListener("click", async () => {
+        const sig = document.getElementById("sig").value.trim();
+        const cid = document.getElementById("cid").value.trim();
+        const email = document.getElementById("email").value.trim();
+
+        const url = `/api/webhooks/activecampaign?sig=${encodeURIComponent(sig)}&debug=1`;
+
+        const body = new URLSearchParams();
+        body.set("contact[id]", cid);
+        body.set("contact[email]", email);
+        body.set("event", "contact_updated");
+        body.set("date_time", new Date().toISOString());
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+          body: body.toString()
+        });
+
+        const text = await res.text();
+        document.getElementById("out").textContent = `HTTP ${res.status}\n\n${text}`;
+      });
+    </script>
   </body>
 </html>
