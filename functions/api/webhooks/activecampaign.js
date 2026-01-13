@@ -6,26 +6,15 @@ export async function onRequest(context) {
   const debug = url.searchParams.get("debug") === "1";
   const expected = env.WEBHOOK_SIG;
 
-  if (!expected) {
-    return new Response(
-      JSON.stringify({ error: "Missing WEBHOOK_SIG in environment variables" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
-  }
+  const json = (obj, status = 200, extraHeaders = {}) =>
+    new Response(JSON.stringify(obj), {
+      status,
+      headers: { "Content-Type": "application/json", ...extraHeaders },
+    });
 
-  if (!sig || sig !== expected) {
-    return new Response(
-      JSON.stringify({ error: "Unauthorized" }),
-      { status: 401, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
-  if (request.method !== "POST") {
-    return new Response(
-      JSON.stringify({ error: "Method Not Allowed" }),
-      { status: 405, headers: { "Content-Type": "application/json" } }
-    );
-  }
+  if (!expected) return json({ error: "Missing WEBHOOK_SIG in environment variables" }, 500);
+  if (!sig || sig !== expected) return json({ error: "Unauthorized" }, 401);
+  if (request.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
 
   const contentType = request.headers.get("content-type") || "";
   let payload = {};
@@ -45,50 +34,28 @@ export async function onRequest(context) {
       }
     }
   } catch (e) {
-    return new Response(
-      JSON.stringify({ error: "Invalid payload", detail: String(e) }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
+    return json({ error: "Invalid payload", detail: String(e) }, 400);
   }
 
-  // Extrair campos comuns (AC costuma mandar form-urlencoded com chaves "contact[id]")
+  const keysCount = Object.keys(payload || {}).length;
+
   const contactId =
     payload["contact[id]"] ||
     payload["contact_id"] ||
     payload["id"] ||
-    null;
+    "";
 
   const email =
     payload["contact[email]"] ||
     payload["email"] ||
-    null;
+    "";
 
-  const pick = (obj, keys) => {
-    const out = {};
-    for (const k of keys) if (obj && k in obj) out[k] = obj[k];
-    return out;
-  };
+  // Header curto (limite prático: mantenha bem pequeno)
+  const debugHeader = debug
+    ? `contactId=${String(contactId).slice(0, 40)};email=${String(email).slice(0, 60)};keys=${keysCount}`
+    : "";
 
-  if (debug) {
-    const keys = Object.keys(payload || {}).slice(0, 200); // limita para não explodir
-    return new Response(
-      JSON.stringify({
-        received: true,
-        debug: true,
-        contentType,
-        keys,
-        highlights: {
-          contactId,
-          email,
-          topLevel: pick(payload, ["type", "event", "action", "date_time", "initiated_from"])
-        }
-      }, null, 2),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
-  }
+  const extra = debug ? { "x-ac-debug": debugHeader } : {};
 
-  return new Response(
-    JSON.stringify({ received: true }),
-    { status: 200, headers: { "Content-Type": "application/json" } }
-  );
+  return json({ received: true }, 200, extra);
 }
